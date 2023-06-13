@@ -1,0 +1,122 @@
+---
+title: "NS to BL Project"
+author: "Derek Stockman"
+date: "`r Sys.Date()`"
+output: html_document
+--- 
+
+```{r}
+library(reticulate)
+use_python("c:/Users/dstoc/Documents/Python Scripts/First Project/.venv/Scripts/python.exe")
+```
+
+
+```{python}
+import pandas as pd
+df = pd.read_excel('C:/Users/dstoc/Documents/Python Scripts/First Project/NS_output.xlsx')
+print(df.head(10))
+```
+```{python}
+import pandas as pd
+df = pd.read_excel('C:/Users/dstoc/Documents/Python Scripts/First Project/NS_output.xlsx')
+print(df.head(10))
+```
+
+```{python}
+df2 = df[['Name',
+ 'Sector',
+ 'Weight (%)',
+ 'Notional Value',
+ 'CUSIP',
+ #'Price',
+ 'Duration',
+ 'YTM (%)',
+ 'Maturity',
+ 'Coupon (%)',
+ 'Mod. Duration',
+ 'Yield to Worst (%)']]
+
+df2 = df2.iloc[0:len(df2),]
+
+```
+
+First, convert maturity to a numeric value for calculation purposes.
+```{python}
+import pandas as pd
+from datetime import datetime, timedelta
+
+# Define the date format
+date_format = "%b %d, %Y"
+
+# Define a function to convert a date string to the number of days away
+def convert_to_years(date_str):
+    date_obj = datetime.strptime(date_str, date_format)
+    current_date = datetime.now()
+    years_away = (date_obj - current_date).days / 365
+
+    if years_away < 0:
+        years_away = years_away + 100  # Add 100 years (365.25 days per year on average)
+    
+    return years_away
+
+# Apply the function to the 'Date' column
+df2['MaturityYears'] = df2['Maturity'].apply(convert_to_years)
+
+# Print the updated DataFrame
+df2.head
+
+```
+Define a function that fits a Nelson-Siegel curve to the Yield-to-Worst values of individual bonds in each sector.
+```{python}
+import numpy as np
+from nelson_siegel_svensson.calibrate import calibrate_ns_ols, errorfn_ns_ols
+from matplotlib import pyplot as plt
+
+def my_NS_func(x_df):
+    time = np.array(x_df["MaturityYears"])
+    yld = np.array(x_df["Yield to Worst (%)"])
+
+    #plt.plot(time,yld, "r+"); 
+    curve, status = calibrate_ns_ols(
+        time,yld, tau0=1.0
+    )  # starting value of 1.0 for the optimization of tau
+    assert status.success
+    curve  
+    
+    # fig, ax = plt.subplots(nrows=1, ncols=1)
+    # fig.suptitle("Calibrated Nelson-Siegel Curve")
+    # ax.plot(time, yld, "r+")
+    # t2 = np.linspace(0, 50)
+    # ax.plot(t2, curve(t2), "b-");
+
+    Yhat = x_df['Yield to Worst (%)'].apply(curve)
+    x_df.loc[:,'Yhat'] = Yhat
+
+    Spread_to_Curve = x_df['Yield to Worst (%)'] - x_df['Yhat']
+    return Spread_to_Curve
+
+```
+
+```{python}
+df3 = df2
+df3['Spread to Curve'] = df3.groupby('Sector').apply(my_NS_func).reset_index(level=0, drop=True)
+df3.head
+```
+
+```{python}
+df3.loc[:,'Implied Performance'] = (df3['Duration'] * df3['Spread to Curve']) + df3['Yield to Worst (%)']
+df_final = df3
+df_final.head
+```
+## Insert Data
+```{r, echo = FALSE}
+# Load the required libraries
+library(DT)
+
+# Create a data table
+dt <- py$df
+
+# Render the scrollable table
+datatable(dt, options = list(scrollX = TRUE, scrollY = "400px"))
+```
+
