@@ -13,16 +13,11 @@ use_python("c:/Users/dstoc/Documents/Python Scripts/First Project/.venv/Scripts/
 
 ```{python}
 import pandas as pd
-df = pd.read_excel('C:/Users/dstoc/Documents/Python Scripts/First Project/NS_output.xlsx')
-print(df.head(10))
-```
-```{python}
-import pandas as pd
-df = pd.read_excel('C:/Users/dstoc/Documents/Python Scripts/First Project/NS_output.xlsx')
+df = pd.read_excel('C:/Users/dstoc/Documents/Python Scripts/First Project/QLTA.xlsx')
 print(df.head(10))
 ```
 
-```{python}
+```{python, echo = F}
 df2 = df[['Name',
  'Sector',
  'Weight (%)',
@@ -41,7 +36,7 @@ df2 = df2.iloc[0:len(df2),]
 ```
 
 First, convert maturity to a numeric value for calculation purposes.
-```{python}
+```{python Define and Apply MaturityYears, echo=F}
 import pandas as pd
 from datetime import datetime, timedelta
 
@@ -67,7 +62,7 @@ df2.head
 
 ```
 Define a function that fits a Nelson-Siegel curve to the Yield-to-Worst values of individual bonds in each sector.
-```{python}
+```{python Define NS Function}
 import numpy as np
 from nelson_siegel_svensson.calibrate import calibrate_ns_ols, errorfn_ns_ols
 from matplotlib import pyplot as plt
@@ -82,12 +77,6 @@ def my_NS_func(x_df):
     )  # starting value of 1.0 for the optimization of tau
     assert status.success
     curve  
-    
-    # fig, ax = plt.subplots(nrows=1, ncols=1)
-    # fig.suptitle("Calibrated Nelson-Siegel Curve")
-    # ax.plot(time, yld, "r+")
-    # t2 = np.linspace(0, 50)
-    # ax.plot(t2, curve(t2), "b-");
 
     Yhat = x_df['Yield to Worst (%)'].apply(curve)
     x_df.loc[:,'Yhat'] = Yhat
@@ -97,11 +86,48 @@ def my_NS_func(x_df):
 
 ```
 
-```{python}
+```{python Apply NS function}
 df3 = df2
 df3['Spread to Curve'] = df3.groupby('Sector').apply(my_NS_func).reset_index(level=0, drop=True)
 df3.head
 ```
+```{python Exemplify NS Curve, echo=F}
+df3_sub = df2.loc[df2['Sector'] == 'Communications']
+time = np.array(df3_sub["MaturityYears"])
+yld = np.array(df3_sub["Yield to Worst (%)"])
+curve, status = calibrate_ns_ols(
+    time,yld, tau0=0.10
+)  # starting value of 1.0 for the optimization of tau
+assert status.success
+curve
+Yhat = df3_sub['MaturityYears'].apply(curve)
+
+```
+```{r, echo=FALSE}
+# Install and load the necessary packages
+library(ggplot2)
+
+# Create a data frame with example data
+data <- data.frame(
+  x = py$time,
+  y = py$yld,
+  line = py$Yhat # Series of numbers for the line plot
+)
+
+# Create a scatter plot with a line plot
+scatter_plot <- ggplot(data, aes(x = x, y = y)) +
+  geom_point() +
+  geom_line(aes(x = x, y = line), color = "blue") + # Adding the line plot
+  labs(title = "Fiited Nelson-Siegel Curve for the Communications Sector",
+       x = "X",
+       y = "Y") +
+  theme_minimal()
+
+# Print the scatter plot
+print(scatter_plot)
+
+```
+
 
 ```{python}
 df3.loc[:,'Implied Performance'] = (df3['Duration'] * df3['Spread to Curve']) + df3['Yield to Worst (%)']
@@ -114,9 +140,281 @@ df_final.head
 library(DT)
 
 # Create a data table
-dt <- py$df
+dt <- py$df_final
 
 # Render the scrollable table
 datatable(dt, options = list(scrollX = TRUE, scrollY = "400px"))
 ```
 
+```{r Reassign output data, echo=F}
+NS_output <- py$df_final
+
+```
+
+```{r Define BL Functions, echo=F}
+#### define functions ####
+BlackLittermanFormula = function( Mu, Sigma, P, v, Omega)
+{
+  BLMu    = Mu + Sigma %*% t( P ) %*% ( solve( P %*% Sigma %*% t( P ) + Omega ) %*% ( v - P %*% Mu ) );
+  BLSigma =  Sigma -  Sigma %*% t( P ) %*% ( solve( P %*% Sigma %*% t( P ) + Omega ) %*% ( P %*% Sigma ) );
+  
+  return( list( BLMu = BLMu , BLSigma = BLSigma ) );
+  
+}
+
+
+black.litterman.corrected <- function (R, P, Mu = NULL, Sigma = NULL, Views = NULL, Omega = NULL) 
+{
+  if (is.null(Mu)) {
+    Mu <- colMeans(R)
+  }
+  if (length(Mu) != NCOL(R)) 
+    stop("length of Mu must equal number of columns of R")
+  if (is.null(Sigma)) {
+    Sigma <- cov(R)
+  }
+  if (!all(dim(Sigma) == NCOL(R))) 
+    stop("dimensions of Sigma must equal number of columns of R")
+  
+  if(is.null(Omega)){
+  Omega = tcrossprod(P %*% Sigma, P)
+  }
+  if (is.null(Views)) 
+    Views = as.numeric(sqrt(diag(Omega)))
+  B = BlackLittermanFormula(Mu, Sigma, P, Views, Omega)
+  return(B)
+}
+
+portfolio.moments.bl.corrected <- function(R, portfolio, momentargs=NULL, P, Mu=NULL, Sigma=NULL, ...){
+  
+  
+  # If any of the objectives have clean as an argument, we fit the factor
+  # model with cleaned returns. Is this the desired behavior we want?
+  clean <- unlist(lapply(portfolio$objectives, function(x) x$arguments$clean))
+  if(!is.null(clean)){
+    if(length(unique(clean)) > 1){
+      warning(paste("Multiple methods detected for cleaning returns, default to use clean =", clean[1]))
+    }
+    # This sets R as the cleaned returns for the rest of the function
+    # This is probably fine since the only other place R is used is for the 
+    # mu estimate
+    R <- Return.clean(R, method=clean[1])
+  }
+  
+  # Compute the Black Litterman estimates
+  B <- black.litterman.corrected(R=R, P=P, Mu=Mu, Sigma=Sigma,Omega = Omega)
+  
+  if(!hasArg(momentargs) | is.null(momentargs)) momentargs<-list()
+  if(is.null(portfolio$objectives)) {
+    warning("no objectives specified in portfolio")
+  } else {
+    for (objective in portfolio$objectives){
+      switch(objective$name,
+             mean = {
+               if(is.null(momentargs$mu)) momentargs$mu = B$BLMu
+             },
+             var =,
+             sd =,
+             StdDev = { 
+               if(is.null(momentargs$mu)) momentargs$mu = B$BLMu
+               if(is.null(momentargs$sigma)) momentargs$sigma = B$BLSigma
+             },
+             mVaR =,
+             VaR = ,
+             EQS = {
+               if(is.null(momentargs$mu)) momentargs$mu = B$BLMu
+               if(is.null(momentargs$sigma)) momentargs$sigma = B$BLSigma
+               if(is.null(momentargs$m3)) momentargs$m3 = PerformanceAnalytics::M3.MM(R)
+               if(is.null(momentargs$m4)) momentargs$m4 = PerformanceAnalytics::M4.MM(R)
+             },
+             es =,
+             mES =,
+             CVaR =,
+             cVaR =,
+             ETL=,
+             mETL=,
+             ES = {
+               # We don't want to calculate these moments if we have an ES 
+               # objective and are solving as an LP problem.
+               if(hasArg(ROI)) ROI=match.call(expand.dots=TRUE)$ROI else ROI=FALSE
+               if(!ROI){
+                 if(is.null(momentargs$mu)) momentargs$mu = B$BLMu
+                 if(is.null(momentargs$sigma)) momentargs$sigma = B$BLSigma
+                 if(is.null(momentargs$m3)) momentargs$m3 = PerformanceAnalytics::M3.MM(R)
+                 if(is.null(momentargs$m4)) momentargs$m4 = PerformanceAnalytics::M4.MM(R)
+               }
+             }
+      ) # end switch on objectives    
+    }    
+  }    
+  return(momentargs)
+}
+
+#' @title Computes the Black-Litterman formula for the moments of the posterior normal.
+#'
+#' @description This function computes the Black-Litterman formula for the moments of the posterior normal, as described in  
+#' A. Meucci, "Risk and Asset Allocation", Springer, 2005.
+#' 
+#' @param		Mu       [vector] (N x 1) prior expected values.
+#' @param		Sigma    [matrix] (N x N) prior covariance matrix.
+#' @param		P        [matrix] (K x N) pick matrix.
+#' @param		v        [vector] (K x 1) vector of views.
+#' @param		Omega    [matrix] (K x K) matrix of confidence.
+#'
+#' @return	BLMu     [vector] (N x 1) posterior expected values.
+#' @return	BLSigma  [matrix] (N x N) posterior covariance matrix.
+#'                              - N = # of assets
+#'                              - K = # of Views
+#' @references
+#' A. Meucci - "Exercises in Advanced Risk and Portfolio Management" \url{http://symmys.com/node/170}.
+#'
+#' See Meucci's script for "BlackLittermanFormula.m"
+#'
+#' @author Xavier Valls \email{flamejat@@gmail.com}
+
+
+```
+
+```{r set-up BL inputs, echo=F}
+#### Set-up ####
+library(xts)
+R <- t(NS_output$`Yield to Worst (%)`)
+funds <- NS_output$CUSIP
+colnames(R)<- funds
+for(i in 1:90){
+  R = rbind(R,t(NS_output$`Yield to Worst (%)`))
+}
+
+sector_drifts <- rnorm(length(unique(NS_output$Sector)),0,1)/100
+
+for(i in 1:90){
+  for(k in 1:ncol(R)){
+    drift <- sector_drifts[match(NS_output[ 
+                            match(colnames(R)[k],NS_output$CUSIP),"Sector"],
+                   unique(NS_output$Sector))]
+    R[i,k] <- R[i,k] * (1 + rnorm(1,drift,1)/100)
+  }
+}
+dates <- seq.Date(Sys.Date() - nrow(R)+1 ,Sys.Date(), by = 1)
+R <- as.xts(R, order.by = dates)
+Mu <- as.vector(t(NS_output$`Yield to Worst (%)`))
+
+#Sigma <- matrix(0, nrow = length(Mu), ncol = length(Mu))
+
+Views <- NS_output$`Implied Performance`
+
+Picking <- matrix(0, nrow = length(Views), ncol = length(Views))
+
+for(i in 1:nrow(Picking)){
+  Picking[i,i] <- 1 # 1 for absolute views
+}
+
+Omega <- matrix(0, nrow = length(Views), ncol = length(Views))
+diag(Omega) <- runif(length(Views),0,.1) #1
+
+
+```
+
+
+```{r, First Portfolio, echo=F}
+#### First Portfolio ####
+library(PortfolioAnalytics)
+bl1.portf <- portfolio.spec(assets=funds)
+bl1.portf <- add.constraint(portfolio=bl1.portf, type="full_investment")
+bl1.portf <- add.constraint(portfolio=bl1.portf, type="leverage", min_sum=0.99, max_sum=1.01)
+bl1.portf <- add.constraint(portfolio=bl1.portf, type="long_only",min_mult =NULL, max_mult=NULL)
+bl1.portf <- add.objective(portfolio=bl1.portf, type="return", name="mean")
+bl1.portf
+
+
+bl1_opt <- optimize.portfolio(R=R, portfolio=bl1.portf, 
+                              optimize_method="ROI", trace=TRUE,
+                              momentFUN = "portfolio.moments.bl.corrected",
+                              P = Picking,
+                              Mu = Mu,
+                              Sigma = NULL,
+                              Views = Views,
+                              Omega = NULL
+                              )
+print(bl1_opt$objective_measures)
+
+```
+
+# Add Sector Constraints
+```{r Second Portfolio, echo=FALSE}
+#### Second Portfolio ####
+bl2.portf <- bl1.portf
+sector_groups <- list()
+group_mins <- list()
+group_maxs <- list()
+for (i in 1:length(unique(NS_output$Sector))){
+  s <- subset(NS_output, Sector == unique(NS_output$Sector)[i])
+  
+  for (j in 1:nrow(s)) {
+    cusip <- s$CUSIP[j]
+    pos <- match(cusip, colnames(R))
+    sector_groups[[unique(NS_output$Sector)[i]]][j] <- pos
+  }
+  
+  group_mins[[i]] <- pmax(sum(s$`Weight (%)`) - 10,0)/100
+  group_maxs[[i]] <- pmax(sum(s$`Weight (%)`) + 10,0)/100
+  
+}
+
+bl2.portf <- add.constraint(portfolio = bl2.portf, type = "box",
+                            min= min(NS_output$`Weight (%)`)/100,max = .01,min_mult =NULL, max_mult=NULL )
+bl2.portf <- add.constraint(portfolio=bl2.portf, type="group", 
+                            groups = sector_groups,
+                            group_min = unlist(group_mins),
+                            group_max = unlist(group_maxs)
+                            )
+bl2_opt <- optimize.portfolio(R=R, portfolio=bl2.portf, 
+                              optimize_method="ROI", 
+                              trace=TRUE,
+                              momentFUN = "portfolio.moments.bl.corrected",
+                              P = Picking,
+                              Mu = Mu,
+                              Sigma = NULL,
+                              Views = Views,
+                              Omega = NULL)
+print(bl2_opt$objective_measures)
+```
+
+```{r,echo=FALSE}
+opt_sector_wts <- extractGroups(bl2_opt)
+opt_sector_wts <- opt_sector_wts$group_weights
+library(foreach)
+init_sector_wts <- foreach(b = unique(NS_output$Sector)) %do%{
+  s <- subset(NS_output, Sector == b)
+  sum(s$`Weight (%)`)
+}
+names(init_sector_wts) <- unique(NS_output$Sector)
+
+
+library(ggplot2)
+
+# Create a data frame with the initial and new weights of assets
+weights <- data.frame(
+  Sector = unique(NS_output$Sector),
+  Initial_Weight = unlist(init_sector_wts)/100,
+  New_Weight = opt_sector_wts,row.names = NULL
+)
+print(weights)
+# Reshape the data frame to a long format
+weights_long <- reshape2::melt(weights, id.vars = "Sector", variable.name = "Weight_Type", value.name = "Weight")
+
+# Create a bar chart comparing the initial and new weights side by side
+chart <- ggplot(weights_long, aes(x = Sector, y = Weight, fill = Weight_Type)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.6) +
+  labs(title = "Comparison of Initial Weights to New Weights",
+       x = "Sector",
+       y = "Weight") +
+  scale_fill_manual(values = c("steelblue", "darkorange")) +
+  scale_y_continuous(labels = scales::percent) +
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+# Print the chart
+print(chart)
+
+```
