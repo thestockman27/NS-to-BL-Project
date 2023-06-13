@@ -5,6 +5,17 @@ date: "`r Sys.Date()`"
 output: html_document
 --- 
 
+Welcome! With this project, I hope to provide a clear demonstration of my capabilities. While I don't claim to be an expert in linear programming nor a full-blown developer, I do posess the curiosity and intelligence to deliver decision-useful projects and analysis.
+
+## Outline 
+  This project was inspired by my work with factor modeling in corporate bond markets. My research uncovered the persistence of a Value factor in determining excess returns, particularly within the Investment Grade universe. Measurement of Value must account for the term structure of interest rates and spread. It is preferable to perform this analysis upon the Option Adjusted Spread (OAS) of individual bonds, unfortunately I was unable to locate publicly available OAS data, so we will settle for using the Yield-to-Worst (YTW) statistic.
+    
+  We begin by fitting a curve using the Nelson-Siegel model to the YTW of the bonds included in each sector. From there, we calculate the implied spread to the curve is for each bond. This value represents the potential spread compression possible if the bond were to fully converge with peers. The potential spread compression is multiplied by each bond's duration to arrive at an implied performance. This value will serve as a critical input to the subsequent optimization.
+  
+  The Black-Litterman model offers a intuitive method for combining an analyst's view with the equilibrium return of an asset. With YTW serving as the equilibrium returns and the implied performance calculated by the previously described relative valuation methodology, we can produce a more intuitive portfolio for capturing the excess return driven by the Value factor.
+  
+  
+#### Set up / Importation / Pre-processing 
 ```{r}
 library(reticulate)
 use_python("c:/Users/dstoc/Documents/Python Scripts/First Project/.venv/Scripts/python.exe")
@@ -14,7 +25,16 @@ use_python("c:/Users/dstoc/Documents/Python Scripts/First Project/.venv/Scripts/
 ```{python}
 import pandas as pd
 df = pd.read_excel('C:/Users/dstoc/Documents/Python Scripts/First Project/QLTA.xlsx')
-print(df.head(10))
+```
+```{r, echo = FALSE}
+# Load the required libraries
+library(DT)
+
+# Create a data table
+dt <- py$df
+
+# Render the scrollable table
+datatable(dt, options = list(scrollX = TRUE, scrollY = "400px"))
 ```
 
 ```{python, echo = F}
@@ -35,8 +55,9 @@ df2 = df2.iloc[0:len(df2),]
 
 ```
 
-First, convert maturity to a numeric value for calculation purposes.
-```{python Define and Apply MaturityYears, echo=F}
+#### Analysis
+First, convert each bond's maturity to a numeric value for calculation purposes.
+```{python Define and Apply MaturityYears, echo=T}
 import pandas as pd
 from datetime import datetime, timedelta
 
@@ -56,9 +77,6 @@ def convert_to_years(date_str):
 
 # Apply the function to the 'Date' column
 df2['MaturityYears'] = df2['Maturity'].apply(convert_to_years)
-
-# Print the updated DataFrame
-df2.head
 
 ```
 Define a function that fits a Nelson-Siegel curve to the Yield-to-Worst values of individual bonds in each sector.
@@ -89,8 +107,9 @@ def my_NS_func(x_df):
 ```{python Apply NS function}
 df3 = df2
 df3['Spread to Curve'] = df3.groupby('Sector').apply(my_NS_func).reset_index(level=0, drop=True)
-df3.head
 ```
+
+Below is an example of what happens within the function above, applied to just one sector.
 ```{python Exemplify NS Curve, echo=F}
 df3_sub = df2.loc[df2['Sector'] == 'Communications']
 time = np.array(df3_sub["MaturityYears"])
@@ -128,22 +147,22 @@ print(scatter_plot)
 
 ```
 
-
+Calculate additional performance driven by compression of bond's yield to the curve
+% Change in Price = - Duration x Change in Spread
 ```{python}
 df3.loc[:,'Implied Performance'] = (df3['Duration'] * df3['Spread to Curve']) + df3['Yield to Worst (%)']
 df_final = df3
-df_final.head
 ```
-## Insert Data
+## Results
 ```{r, echo = FALSE}
 # Load the required libraries
 library(DT)
 
 # Create a data table
-dt <- py$df_final
+dt2 <- py$df_final
 
 # Render the scrollable table
-datatable(dt, options = list(scrollX = TRUE, scrollY = "400px"))
+datatable(dt2, options = list(scrollX = TRUE, scrollY = "400px"))
 ```
 
 ```{r Reassign output data, echo=F}
@@ -275,9 +294,10 @@ portfolio.moments.bl.corrected <- function(R, portfolio, momentargs=NULL, P, Mu=
 
 ```
 
-```{r set-up BL inputs, echo=F}
+# NEED SOME EXPLANATION OF THE BL MODEL HERE
+```{r set-up BL inputs, echo=T}
 #### Set-up ####
-library(xts)
+invisible(library(xts))
 R <- t(NS_output$`Yield to Worst (%)`)
 funds <- NS_output$CUSIP
 colnames(R)<- funds
@@ -315,10 +335,10 @@ diag(Omega) <- runif(length(Views),0,.1) #1
 
 ```
 
-
-```{r, First Portfolio, echo=F}
+We now utilize R's PortfolioAnalytics package to optimize via the Black-Litterman model. We first setup a base portfolio with the only constraints being that it is Long-only and that the portfolio is fully invested. Note that the leverage constraint allows for some leeway when utilizing other optimizers, such as Differential Evolution. I don't use that in this demonstration but may have to do so if I add a Duration objective. Stay tuned for that!
+```{r, First Portfolio, echo=T}
 #### First Portfolio ####
-library(PortfolioAnalytics)
+invisible(library(PortfolioAnalytics))
 bl1.portf <- portfolio.spec(assets=funds)
 bl1.portf <- add.constraint(portfolio=bl1.portf, type="full_investment")
 bl1.portf <- add.constraint(portfolio=bl1.portf, type="leverage", min_sum=0.99, max_sum=1.01)
@@ -340,8 +360,8 @@ print(bl1_opt$objective_measures)
 
 ```
 
-# Add Sector Constraints
-```{r Second Portfolio, echo=FALSE}
+In this next portfolio, I add Sector Constraints. Allowing the weight of each sector to fluctuate by +/- 10% with a lower bound of zero.
+```{r Second Portfolio, echo=TRUE}
 #### Second Portfolio ####
 bl2.portf <- bl1.portf
 sector_groups <- list()
@@ -380,6 +400,8 @@ bl2_opt <- optimize.portfolio(R=R, portfolio=bl2.portf,
 print(bl2_opt$objective_measures)
 ```
 
+
+Let's explore our results! It appears that there is potential value within the Banking, Electric, and REITs sectors. While this quantitative approach is not all-inclusive, the identification of opportunities within these sectors allows credit analysts to better prioritize their research efforts. Potentially allowing the team to capture even more alpha.
 ```{r,echo=FALSE}
 opt_sector_wts <- extractGroups(bl2_opt)
 opt_sector_wts <- opt_sector_wts$group_weights
