@@ -1,5 +1,5 @@
 ---
-title: "NS to BL Project"
+title: "Relative Value Optimization Project"
 author: "Derek Stockman"
 date: "`r Sys.Date()`"
 output: html_document
@@ -7,7 +7,7 @@ output: html_document
 
 Welcome! With this project, I hope to provide a clear demonstration of my capabilities. While I don't claim to be an expert in linear programming nor a full-blown developer, I do posess the curiosity and intelligence to deliver decision-useful projects and analysis.
 
-## Outline 
+#### Outline 
   This project was inspired by my work with factor modeling in corporate bond markets. My research uncovered the persistence of a Value factor in determining excess returns, particularly within the Investment Grade universe. Measurement of Value must account for the term structure of interest rates and spread. It is preferable to perform this analysis upon the Option Adjusted Spread (OAS) of individual bonds, unfortunately I was unable to locate publicly available OAS data, so we will settle for using the Yield-to-Worst (YTW) statistic.
     
   We begin by fitting a curve using the Nelson-Siegel model to the YTW of the bonds included in each sector. From there, we calculate the implied spread to the curve is for each bond. This value represents the potential spread compression possible if the bond were to fully converge with peers. The potential spread compression is multiplied by each bond's duration to arrive at an implied performance. This value will serve as a critical input to the subsequent optimization.
@@ -21,7 +21,7 @@ library(reticulate)
 use_python("c:/Users/dstoc/Documents/Python Scripts/First Project/.venv/Scripts/python.exe")
 ```
 
-
+We utilize BlackRock iShares Aaa-A Rated Corporate Bond ETF (QLTA) for CUSIP-level details and analytics.
 ```{python}
 import pandas as pd
 df = pd.read_excel('C:/Users/dstoc/Documents/Python Scripts/First Project/QLTA.xlsx')
@@ -148,7 +148,7 @@ print(scatter_plot)
 ```
 
 Calculate additional performance driven by compression of bond's yield to the curve
-% Change in Price = - Duration x Change in Spread
+% Change in Price = Duration x Spread to Curve
 ```{python}
 df3.loc[:,'Implied Performance'] = (df3['Duration'] * df3['Spread to Curve']) + df3['Yield to Worst (%)']
 df_final = df3
@@ -295,50 +295,66 @@ portfolio.moments.bl.corrected <- function(R, portfolio, momentargs=NULL, P, Mu=
 ```
 
 # NEED SOME EXPLANATION OF THE BL MODEL HERE
-```{r set-up BL inputs, echo=T}
-#### Set-up ####
-invisible(library(xts))
+The Black-Litterman model offers a framework for analysts to update equilibrium returns with their views on specific assets. The model operates like a weighted average between the implied returns and views, with each being scaled by the covariance matrix and the analyst's confidence in each view respectively.
+
+For the purposes of this example, returns were generated in place of observed returns. However, each sector received a unique drift term in an attempt to replicate some level of realistic correlation.
+
+Further, the confidence level of each view is the most difficult parameter to estimate. We allow the model to operate under its default assumption of confidence, that it is equal to the inverse of the covariance matrix. Essentially, the higher the variance in each asset, the less confident we are in the view provided by the Nelson-Siegel model.
+
+```{r, include=FALSE}
+library(xts)
+```
+```{r generate returns, echo=T}
+# Create a dataframe populated with the YTW values of each bond.
 R <- t(NS_output$`Yield to Worst (%)`)
 funds <- NS_output$CUSIP
 colnames(R)<- funds
-for(i in 1:90){
+for(i in 1:89){
   R = rbind(R,t(NS_output$`Yield to Worst (%)`))
 }
 
+# Generate drift terms for each sector
 sector_drifts <- rnorm(length(unique(NS_output$Sector)),0,1)/100
 
+# iterate over each observation for each bond, simulating a random walk with sector-based drift
 for(i in 1:90){
   for(k in 1:ncol(R)){
-    drift <- sector_drifts[match(NS_output[ 
-                            match(colnames(R)[k],NS_output$CUSIP),"Sector"],
+    drift <- sector_drifts[match(NS_output[match(colnames(R)[k],NS_output$CUSIP),"Sector"],
                    unique(NS_output$Sector))]
+    if(i==1){
     R[i,k] <- R[i,k] * (1 + rnorm(1,drift,1)/100)
-  }
+    }else{
+      R[i,k] <- R[i-1,k] * (1 + rnorm(1,drift,1)/100)
+    }
+    }
 }
 dates <- seq.Date(Sys.Date() - nrow(R)+1 ,Sys.Date(), by = 1)
 R <- as.xts(R, order.by = dates)
+```
+```{r,echo=FALSE}
+plot.xts(R[,c(1:3,12,14:19)], main = "Random Walk w/ Drift in Consumer Non-Cyclical", xlab = "Date", ylab = "Yield-to-Worst (%)")
+```
+
+We now specify the components of the Black-Litterman Model
+```{r set-up BL inputs, echo=T}
 Mu <- as.vector(t(NS_output$`Yield to Worst (%)`))
-
-#Sigma <- matrix(0, nrow = length(Mu), ncol = length(Mu))
-
+Sigma <- cov(R) 
 Views <- NS_output$`Implied Performance`
-
 Picking <- matrix(0, nrow = length(Views), ncol = length(Views))
-
 for(i in 1:nrow(Picking)){
   Picking[i,i] <- 1 # 1 for absolute views
 }
-
+# We won't pass Sigma or Omega to the optimization, allowing the function to use defaults
 Omega <- matrix(0, nrow = length(Views), ncol = length(Views))
 diag(Omega) <- runif(length(Views),0,.1) #1
-
-
 ```
 
 We now utilize R's PortfolioAnalytics package to optimize via the Black-Litterman model. We first setup a base portfolio with the only constraints being that it is Long-only and that the portfolio is fully invested. Note that the leverage constraint allows for some leeway when utilizing other optimizers, such as Differential Evolution. I don't use that in this demonstration but may have to do so if I add a Duration objective. Stay tuned for that!
+```{r load portfolioanalytics, include=F}
+library(PortfolioAnalytics)
+```
 ```{r, First Portfolio, echo=T}
 #### First Portfolio ####
-invisible(library(PortfolioAnalytics))
 bl1.portf <- portfolio.spec(assets=funds)
 bl1.portf <- add.constraint(portfolio=bl1.portf, type="full_investment")
 bl1.portf <- add.constraint(portfolio=bl1.portf, type="leverage", min_sum=0.99, max_sum=1.01)
@@ -352,15 +368,15 @@ bl1_opt <- optimize.portfolio(R=R, portfolio=bl1.portf,
                               momentFUN = "portfolio.moments.bl.corrected",
                               P = Picking,
                               Mu = Mu,
-                              Sigma = NULL,
+                              Sigma = NULL, # allow defaults
                               Views = Views,
-                              Omega = NULL
+                              Omega = NULL  # allow defaults
                               )
 print(bl1_opt$objective_measures)
 
 ```
 
-In this next portfolio, I add Sector Constraints. Allowing the weight of each sector to fluctuate by +/- 10% with a lower bound of zero.
+In this next portfolio, I add weight constraints to each sector. Allowing the weight of each  to fluctuate by +/- 10% with a lower bound of zero.
 ```{r Second Portfolio, echo=TRUE}
 #### Second Portfolio ####
 bl2.portf <- bl1.portf
@@ -369,16 +385,13 @@ group_mins <- list()
 group_maxs <- list()
 for (i in 1:length(unique(NS_output$Sector))){
   s <- subset(NS_output, Sector == unique(NS_output$Sector)[i])
-  
   for (j in 1:nrow(s)) {
     cusip <- s$CUSIP[j]
     pos <- match(cusip, colnames(R))
     sector_groups[[unique(NS_output$Sector)[i]]][j] <- pos
   }
-  
   group_mins[[i]] <- pmax(sum(s$`Weight (%)`) - 10,0)/100
   group_maxs[[i]] <- pmax(sum(s$`Weight (%)`) + 10,0)/100
-  
 }
 
 bl2.portf <- add.constraint(portfolio = bl2.portf, type = "box",
@@ -394,9 +407,10 @@ bl2_opt <- optimize.portfolio(R=R, portfolio=bl2.portf,
                               momentFUN = "portfolio.moments.bl.corrected",
                               P = Picking,
                               Mu = Mu,
-                              Sigma = NULL,
+                              Sigma = NULL,  # allow defaults
                               Views = Views,
-                              Omega = NULL)
+                              Omega = NULL   # allow defaults
+                              )
 print(bl2_opt$objective_measures)
 ```
 
@@ -440,3 +454,17 @@ chart <- ggplot(weights_long, aes(x = Sector, y = Weight, fill = Weight_Type)) +
 print(chart)
 
 ```
+
+Next, I intend to add a duration target to stay within a reasonable range from the index's initial value. This should offer an even more practical solution. However, this involves the use of a differ solver that has been fighting back...to be continued.
+
+
+## References
+Black-Litterman
+- https://people.duke.edu/~charvey/Teaching/BA453_2006/Idzorek_onBL.pdf
+- https://github.com/braverock/PortfolioAnalytics
+Nelson-Siegel
+- https://www.jstor.org/stable/2352957
+- https://github.com/luphord/nelson_siegel_svensson
+BlackRock
+- https://www.ishares.com/us/products/239431/ishares-aaa-a-rated-corporate-bond-etf
+  
