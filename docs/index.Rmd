@@ -5,7 +5,11 @@ date: "`r Sys.Date()`"
 output: html_document
 --- 
 
-Welcome! With this project, I hope to provide a clear demonstration of my capabilities. While I don't claim to be an expert in linear programming nor a full-blown developer, I do posess the curiosity and intelligence to deliver decision-useful projects and analysis.
+Welcome! With this project, I hope to provide a clear demonstration of my capabilities. I'll utilize both Python and R programming languages. While my experience is primarily with R, I am actively improving my python skills. While I don't claim to be an expert in linear programming nor a developer, I do posess the curiosity and intelligence to deliver decision-useful projects and analysis.
+
+**THIS PROJECT IS NOT YET COMPLETE!**
+
+At this time, I am reviewing the output of the optimizations and have noticed some inconsistencies regarding the returns calculated by the Black-Litterman model. The current obstacle is in familiarizing myself with some augmentation to the matrix algebra that the authors of the PortfolioAnalytics package made to the original Black-Litterman formula. When spot-checking the output by hand with the original formula, I arrive at slightly different results. I am no PhD in mathematics, so this issue has slowed progress. That said, let's continue.
 
 #### Outline 
   This project was inspired by my work with factor modeling in corporate bond markets. My research uncovered the persistence of a Value factor in determining excess returns, particularly within the Investment Grade universe. Measurement of Value must account for the term structure of interest rates and spread. It is preferable to perform this analysis upon the Option Adjusted Spread (OAS) of individual bonds, unfortunately I was unable to locate publicly available OAS data, so we will settle for using the Yield-to-Worst (YTW) statistic.
@@ -153,7 +157,7 @@ Calculate additional performance driven by compression of bond's yield to the cu
 df3.loc[:,'Implied Performance'] = (df3['Duration'] * df3['Spread to Curve']) + df3['Yield to Worst (%)']
 df_final = df3
 ```
-## Results
+#### Results
 ```{r, echo = FALSE}
 # Load the required libraries
 library(DT)
@@ -221,7 +225,7 @@ portfolio.moments.bl.corrected <- function(R, portfolio, momentargs=NULL, P, Mu=
   }
   
   # Compute the Black Litterman estimates
-  B <- black.litterman.corrected(R=R, P=P, Mu=Mu, Sigma=Sigma,Omega = Omega)
+  B <- black.litterman.corrected(R=R, P=P, Mu=Mu, Views = Views , Sigma=Sigma,Omega = Omega)
   
   if(!hasArg(momentargs) | is.null(momentargs)) momentargs<-list()
   if(is.null(portfolio$objectives)) {
@@ -294,7 +298,7 @@ portfolio.moments.bl.corrected <- function(R, portfolio, momentargs=NULL, P, Mu=
 
 ```
 
-# NEED SOME EXPLANATION OF THE BL MODEL HERE
+#### Optimization via the Black-Litterman Model
 The Black-Litterman model offers a framework for analysts to update equilibrium returns with their views on specific assets. The model operates like a weighted average between the implied returns and views, with each being scaled by the covariance matrix and the analyst's confidence in each view respectively.
 
 For the purposes of this example, returns were generated in place of observed returns. However, each sector received a unique drift term in an attempt to replicate some level of realistic correlation.
@@ -317,14 +321,14 @@ for(i in 1:89){
 sector_drifts <- rnorm(length(unique(NS_output$Sector)),0,1)/100
 
 # iterate over each observation for each bond, simulating a random walk with sector-based drift
-for(i in 1:90){
+for(i in 90:1){
   for(k in 1:ncol(R)){
     drift <- sector_drifts[match(NS_output[match(colnames(R)[k],NS_output$CUSIP),"Sector"],
                    unique(NS_output$Sector))]
-    if(i==1){
-    R[i,k] <- R[i,k] * (1 + rnorm(1,drift,1)/100)
+    if(i==90){
+    R[i,k] <- R[i,k] 
     }else{
-      R[i,k] <- R[i-1,k] * (1 + rnorm(1,drift,1)/100)
+      R[i,k] <- R[i,k] * (1 + rnorm(1,drift,1)/100)
     }
     }
 }
@@ -344,12 +348,19 @@ Picking <- matrix(0, nrow = length(Views), ncol = length(Views))
 for(i in 1:nrow(Picking)){
   Picking[i,i] <- 1 # 1 for absolute views
 }
-# We won't pass Sigma or Omega to the optimization, allowing the function to use defaults
+
 Omega <- matrix(0, nrow = length(Views), ncol = length(Views))
-diag(Omega) <- runif(length(Views),0,.1) #1
+diag(Omega) <- runif(length(Views),0,.3) #1
 ```
 
-We now utilize R's PortfolioAnalytics package to optimize via the Black-Litterman model. We first setup a base portfolio with the only constraints being that it is Long-only and that the portfolio is fully invested. Note that the leverage constraint allows for some leeway when utilizing other optimizers, such as Differential Evolution. I don't use that in this demonstration but may have to do so if I add a Duration objective. Stay tuned for that!
+We now utilize R's PortfolioAnalytics package to optimize via the Black-Litterman model. We first setup a base portfolio with the fokkowing constraints: 
+- it is Long-only
+- maximum position size of each bond is 1%
+- minimum position size of each bond is equal to the current minimum weight in the portfolio
+- the portfolio is fully invested. 
+
+Note that the leverage constraint allows for some leeway when utilizing other optimizers, 
+
 ```{r load portfolioanalytics, include=F}
 library(PortfolioAnalytics)
 ```
@@ -359,6 +370,8 @@ bl1.portf <- portfolio.spec(assets=funds)
 bl1.portf <- add.constraint(portfolio=bl1.portf, type="full_investment")
 bl1.portf <- add.constraint(portfolio=bl1.portf, type="leverage", min_sum=0.99, max_sum=1.01)
 bl1.portf <- add.constraint(portfolio=bl1.portf, type="long_only",min_mult =NULL, max_mult=NULL)
+bl1.portf <- add.constraint(portfolio = bl1.portf, type = "box",
+                            min= min(NS_output$`Weight (%)`)/100,max = .01,min_mult =NULL, max_mult=NULL )
 bl1.portf <- add.objective(portfolio=bl1.portf, type="return", name="mean")
 bl1.portf
 
@@ -394,8 +407,7 @@ for (i in 1:length(unique(NS_output$Sector))){
   group_maxs[[i]] <- pmax(sum(s$`Weight (%)`) + 10,0)/100
 }
 
-bl2.portf <- add.constraint(portfolio = bl2.portf, type = "box",
-                            min= min(NS_output$`Weight (%)`)/100,max = .01,min_mult =NULL, max_mult=NULL )
+
 bl2.portf <- add.constraint(portfolio=bl2.portf, type="group", 
                             groups = sector_groups,
                             group_min = unlist(group_mins),
@@ -455,16 +467,62 @@ print(chart)
 
 ```
 
-Next, I intend to add a duration target to stay within a reasonable range from the index's initial value. This should offer an even more practical solution. However, this involves the use of a differ solver that has been fighting back...to be continued.
+Next, I intend to add a duration target to stay within a reasonable range from the index's initial value. This should offer an even more practical solution. However, the use of a custom objective function requires the use of an alternative solver (Differential Evolution) that requires significant amount of compute. Therefore, I am simply load the results obtained from one successful optimization.
 
+Other improvements include minimization of another risk factor, such as probability of default.
+
+
+```{r, Add Duration Target}
+#### Third Portfolio ####
+# Add duration target
+# absolute_duration_deviation <- function(R, weights,holdings,init_port_dur){
+#           
+#           durations <- holdings$Duration[1:ncol(R)]
+#           init_weights <- holdings$`Weight (%)`[1:ncol(R)]
+#           weighted_dur <- sum(weights * durations)
+#           dur_diff <- abs(weighted_dur - init_port_dur)
+#           return(dur_diff)
+# }
+# 
+# bl3.portf <- bl1.portf
+# 
+# bl3.portf <- add.objective(portfolio=bl3.portf, type="risk", 
+#                            name="absolute_duration_deviation",
+#                            arguments=list(holdings = NS_output, init_port_dur = 7.17))
+# library(DEoptim)
+# library(foreach)
+# bl3_opt <- optimize.portfolio(R=R, portfolio=bl3.portf, 
+#                               optimize_method="DEoptim", 
+#                               search_size = 10000000,
+#                               itermax = 50,
+#                               trace = TRUE,
+#                               traceDE = 5,
+#                               parallel = TRUE,
+#                               max_permutations = 50000,
+#                               momentFUN = "portfolio.moments.bl.corrected",
+#                               P = Picking,
+#                               Mu = Mu,
+#                               Sigma = NULL,  # allow defaults
+#                               Views = Views,
+#                               Omega = NULL   
+# )
+# 
+# print(bl3_opt$objective_measures)
+# 
+# chart.RiskReward(object = bl3_opt, return.col = "mean", risk.col = "absolute_duration_deviation", main = "Optimization: YTW vs Absolute Duration Deviation")
+
+
+
+```
 
 ## References
-Black-Litterman
-- https://people.duke.edu/~charvey/Teaching/BA453_2006/Idzorek_onBL.pdf
-- https://github.com/braverock/PortfolioAnalytics
-Nelson-Siegel
-- https://www.jstor.org/stable/2352957
-- https://github.com/luphord/nelson_siegel_svensson
-BlackRock
-- https://www.ishares.com/us/products/239431/ishares-aaa-a-rated-corporate-bond-etf
+* Black-Litterman
+  + https://people.duke.edu/~charvey/Teaching/BA453_2006/Idzorek_onBL.pdf
+  + https://github.com/braverock/PortfolioAnalytics
+  + https://papers.ssrn.com/sol3/papers.cfm?abstract_id=1314585
+* Nelson-Siegel
+  + https://www.jstor.org/stable/2352957
+  + https://github.com/luphord/nelson_siegel_svensson
+* BlackRock
+  + https://www.ishares.com/us/products/239431/ishares-aaa-a-rated-corporate-bond-etf
   
