@@ -2,18 +2,17 @@
 title: "Relative Value Optimization Project"
 author: "Derek Stockman"
 date: "`r Sys.Date()`"
-output: html_document
+output:
+  word_document: default
 --- 
 
 Welcome! With this project, I hope to provide a clear demonstration of my capabilities. I'll utilize both Python and R programming languages. While my experience is primarily with R, I am actively improving my python skills. While I don't claim to be an expert in linear programming nor a developer, I do posess the curiosity and intelligence to deliver decision-useful projects and analysis.
 
+If you are viewing the PDF version of this document, you can visit https://thestockman27.github.io/NS-to-BL-Project/ for the latest version.
+
 **THIS PROJECT IS NOT YET COMPLETE!**
 
-At this time, I am reviewing the output of the optimizations and have noticed some inconsistencies regarding the returns calculated by the Black-Litterman model. The current obstacle is in familiarizing myself with some augmentation to the matrix algebra that the authors of the PortfolioAnalytics package made to the original Black-Litterman formula. When spot-checking the output by hand with the original formula, I arrive at slightly different results. I am no PhD in mathematics, so this issue has slowed progress. 
-
-Further, there are some computing limitations. I am running this on my laptop and simply don't have the processing power to perform some of the larger optimizations later on in the project. There also seems to be an issue with my system assuming that large matrices are invertible due to the determinant being near zero but not actually zero. **These constraints have forced me to shrink the number of assets to the first 60 in the index.**
-
-With all that said, let's continue.
+At this time, I am reviewing the output of the optimizations and have noticed some inconsistencies regarding the returns calculated by the Black-Litterman model. The current obstacle is in familiarizing myself with some augmentation to the matrix algebra that the authors of the PortfolioAnalytics package made to the original Black-Litterman formula. When spot-checking the output by hand with the original formula, I arrive at slightly different results. I am no PhD in mathematics, so this issue has slowed progress. That said, let's continue.
 
 #### Outline 
   This project was inspired by my work with factor modeling in corporate bond markets. My research uncovered the persistence of a Value factor in determining excess returns, particularly within the Investment Grade universe. Measurement of Value must account for the term structure of interest rates and spread. It is preferable to perform this analysis upon the Option Adjusted Spread (OAS) of individual bonds, unfortunately I was unable to locate publicly available OAS data, so we will settle for using the Yield-to-Worst (YTW) statistic.
@@ -175,6 +174,7 @@ datatable(dt2, options = list(scrollX = TRUE, scrollY = "400px"))
 
 ```{r Reassign output data, echo=F}
 NS_output <- py$df_final
+
 ```
 
 ```{r Define BL Functions, echo=F}
@@ -207,7 +207,7 @@ black.litterman.corrected <- function (R, P, Mu = NULL, Sigma = NULL, Views = NU
   }
   if (is.null(Views)) 
     Views = as.numeric(sqrt(diag(Omega)))
-  B = BlackLittermanFormula(Mu, Sigma, P, v = Views, Omega)
+  B = BlackLittermanFormula(Mu, Sigma, P, Views, Omega)
   return(B)
 }
 
@@ -306,15 +306,13 @@ The Black-Litterman model offers a framework for analysts to update equilibrium 
 
 For the purposes of this example, returns were generated in place of observed returns. However, each sector received a unique drift term in an attempt to replicate some level of realistic correlation.
 
-Further, the confidence level of each view is the most difficult parameter to estimate.We will operate under the very optimistic assumption that we have 100% confidence in our views, or rather, there is no variance in our confidence. This is represented by setting the diagonal elements of the Omega matrix equal to Zero. Essentially, the higher the variance in each asset, the less confident we are in the view provided by the Nelson-Siegel model.
+Further, the confidence level of each view is the most difficult parameter to estimate. We allow the model to operate under its default assumption of confidence, that it is equal to the inverse of the covariance matrix. Essentially, the higher the variance in each asset, the less confident we are in the view provided by the Nelson-Siegel model.
 
 ```{r, include=FALSE}
 library(xts)
 ```
 ```{r generate returns, echo=T}
 # Create a dataframe populated with the YTW values of each bond.
-#NS_output <- subset(NS_output, Sector == 'Basic Industry')
-NS_output <-NS_output[1:60,]
 R <- t(NS_output$`Yield to Worst (%)`)
 funds <- NS_output$CUSIP
 colnames(R)<- funds
@@ -341,7 +339,7 @@ dates <- seq.Date(Sys.Date() - nrow(R)+1 ,Sys.Date(), by = 1)
 R <- as.xts(R, order.by = dates)
 ```
 ```{r,echo=FALSE}
-plot.xts(R[,c(1:3,12,14:19)], main = "Random Walk w/ Drift in Cons. Non-Cyc.", xlab = "Date", ylab = "Yield-to-Worst (%)")
+plot.xts(R[,c(1:3,12,14:19)], main = "Random Walk w/ Drift in Consumer Non-Cyclical", xlab = "Date", ylab = "Yield-to-Worst (%)")
 ```
 
 We now specify the components of the Black-Litterman Model
@@ -355,10 +353,10 @@ for(i in 1:nrow(Picking)){
 }
 
 Omega <- matrix(0, nrow = length(Views), ncol = length(Views))
-diag(Omega) <- 0 #runif(length(Views),0,.3) #1
+diag(Omega) <- runif(length(Views),0,.3) #1
 ```
 
-We now utilize R's PortfolioAnalytics package to optimize via the Black-Litterman model. We first setup a base portfolio with the following constraints: 
+We now utilize R's PortfolioAnalytics package to optimize via the Black-Litterman model. We first setup a base portfolio with the fokkowing constraints: 
 - it is Long-only
 - maximum position size of each bond is 1%
 - minimum position size of each bond is equal to the current minimum weight in the portfolio
@@ -376,7 +374,7 @@ bl1.portf <- add.constraint(portfolio=bl1.portf, type="full_investment")
 bl1.portf <- add.constraint(portfolio=bl1.portf, type="leverage", min_sum=0.99, max_sum=1.01)
 bl1.portf <- add.constraint(portfolio=bl1.portf, type="long_only",min_mult =NULL, max_mult=NULL)
 bl1.portf <- add.constraint(portfolio = bl1.portf, type = "box",
-                            min= min(NS_output$`Weight (%)`)/100,max = .1,min_mult =NULL, max_mult=NULL )
+                            min= min(NS_output$`Weight (%)`)/100,max = .01,min_mult =NULL, max_mult=NULL )
 bl1.portf <- add.objective(portfolio=bl1.portf, type="return", name="mean")
 bl1.portf
 
@@ -386,9 +384,9 @@ bl1_opt <- optimize.portfolio(R=R, portfolio=bl1.portf,
                               momentFUN = "portfolio.moments.bl.corrected",
                               P = Picking,
                               Mu = Mu,
-                              Sigma = Sigma, 
+                              Sigma = NULL, # allow defaults
                               Views = Views,
-                              Omega = Omega  
+                              Omega = NULL  # allow defaults
                               )
 print(bl1_opt$objective_measures)
 
@@ -416,7 +414,7 @@ for (i in 1:length(unique(NS_output$Sector))){
 bl2.portf <- add.constraint(portfolio=bl2.portf, type="group", 
                             groups = sector_groups,
                             group_min = unlist(group_mins),
-                            group_max = unlist(group_maxs)+.2
+                            group_max = unlist(group_maxs)
                             )
 bl2_opt <- optimize.portfolio(R=R, portfolio=bl2.portf, 
                               optimize_method="ROI", 
@@ -424,22 +422,22 @@ bl2_opt <- optimize.portfolio(R=R, portfolio=bl2.portf,
                               momentFUN = "portfolio.moments.bl.corrected",
                               P = Picking,
                               Mu = Mu,
-                              Sigma = Sigma,  
+                              Sigma = NULL,  # allow defaults
                               Views = Views,
-                              Omega = Omega   
+                              Omega = NULL   # allow defaults
                               )
 print(bl2_opt$objective_measures)
 ```
 
 
-Let's explore our results! It appears that there is potential value within the Communications Sector. While this quantitative approach is not all-inclusive, the identification of opportunities within these sectors allows credit analysts to better prioritize their research efforts. Potentially allowing the team to capture even more alpha.
+Let's explore our results! It appears that there is potential value within the Banking, Electric, and REITs sectors. While this quantitative approach is not all-inclusive, the identification of opportunities within these sectors allows credit analysts to better prioritize their research efforts. Potentially allowing the team to capture even more alpha.
 ```{r,echo=FALSE}
 opt_sector_wts <- extractGroups(bl2_opt)
 opt_sector_wts <- opt_sector_wts$group_weights
 library(foreach)
 init_sector_wts <- foreach(b = unique(NS_output$Sector)) %do%{
   s <- subset(NS_output, Sector == b)
-  sum(s$`Weight (%)`) / sum(NS_output$`Weight (%)`)
+  sum(s$`Weight (%)`)
 }
 names(init_sector_wts) <- unique(NS_output$Sector)
 
@@ -449,7 +447,7 @@ library(ggplot2)
 # Create a data frame with the initial and new weights of assets
 weights <- data.frame(
   Sector = unique(NS_output$Sector),
-  Initial_Weight = unlist(init_sector_wts),
+  Initial_Weight = unlist(init_sector_wts)/100,
   New_Weight = opt_sector_wts,row.names = NULL
 )
 print(weights)
@@ -480,46 +478,43 @@ Other improvements include minimization of another risk factor, such as probabil
 ```{r, Add Duration Target}
 #### Third Portfolio ####
 # Add duration target
-# NS_output$New_Weight <- NS_output$`Weight (%)` / sum(NS_output$`Weight (%)`)
-# 
-# dur_target <- round(sum(NS_output$Duration * NS_output$New_Weight),2)
-# 
 # absolute_duration_deviation <- function(R, weights,holdings,init_port_dur){
 #           
 #           durations <- holdings$Duration[1:ncol(R)]
-#           init_weights <- holdings$New_Weight[1:ncol(R)]
+#           init_weights <- holdings$`Weight (%)`[1:ncol(R)]
 #           weighted_dur <- sum(weights * durations)
 #           dur_diff <- abs(weighted_dur - init_port_dur)
 #           return(dur_diff)
 # }
 # 
+# bl3.portf <- bl1.portf
 # 
-# bl3.portf <- bl2.portf
-# 
-# bl3.portf <- add.objective(portfolio=bl3.portf, type="risk",
+# bl3.portf <- add.objective(portfolio=bl3.portf, type="risk", 
 #                            name="absolute_duration_deviation",
-#                            arguments=list(holdings = NS_output, init_port_dur = dur_target))
+#                            arguments=list(holdings = NS_output, init_port_dur = 7.17))
 # library(DEoptim)
 # library(foreach)
 # bl3_opt <- optimize.portfolio(R=R, portfolio=bl3.portf, 
 #                               optimize_method="DEoptim", 
-#                               search_size = 20000,
+#                               search_size = 10000000,
 #                               itermax = 50,
 #                               trace = TRUE,
 #                               traceDE = 5,
 #                               parallel = TRUE,
-#                               #max_permutations = 50000,
+#                               max_permutations = 50000,
 #                               momentFUN = "portfolio.moments.bl.corrected",
 #                               P = Picking,
 #                               Mu = Mu,
-#                               Sigma = Sigma,  
+#                               Sigma = NULL,  # allow defaults
 #                               Views = Views,
-#                               Omega = Omega   
+#                               Omega = NULL   
 # )
 # 
 # print(bl3_opt$objective_measures)
 # 
-# 
+# chart.RiskReward(object = bl3_opt, return.col = "mean", risk.col = "absolute_duration_deviation", main = "Optimization: YTW vs Absolute Duration Deviation")
+
+
 
 ```
 
@@ -531,7 +526,6 @@ Other improvements include minimization of another risk factor, such as probabil
 * Nelson-Siegel
   + https://www.jstor.org/stable/2352957
   + https://github.com/luphord/nelson_siegel_svensson
-  + https://papers.ssrn.com/sol3/papers.cfm?abstract_id=1314585
 * BlackRock
   + https://www.ishares.com/us/products/239431/ishares-aaa-a-rated-corporate-bond-etf
   
