@@ -472,7 +472,7 @@ print(chart)
 
 ```
 
-Next, I intend to add a duration target to stay within a reasonable range from the index's initial value. This should offer an even more practical solution. However, the use of a custom objective function requires the use of an alternative solver (Differential Evolution) that requires significant amount of compute. Therefore, I am simply load the results obtained from one successful optimization.
+Next, I intend to add a duration target to stay within a reasonable range from the index's initial value. This should offer an even more practical solution. However, the use of a custom objective function requires the use of an alternative solver (Differential Evolution) that is currently throwing an error. Hoping to resolve it soon.
 
 Other improvements include minimization of another risk factor, such as probability of default.
 
