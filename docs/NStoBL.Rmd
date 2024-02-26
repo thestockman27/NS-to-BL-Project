@@ -2,6 +2,8 @@
 title: "Relative Value Optimization Project"
 author: "Derek Stockman"
 output:
+  html_document:
+    df_print: paged
   word_document: default
 --- 
 
