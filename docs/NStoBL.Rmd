@@ -1,7 +1,6 @@
 ---
 title: "Relative Value Optimization Project"
 author: "Derek Stockman"
-date: "`r Sys.Date()`"
 output:
   word_document: default
 --- 
